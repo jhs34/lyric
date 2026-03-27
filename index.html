@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Apple Music Style Lyric Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@500;700;900&display=swap');
+        
+        :root {
+            --lyric-base-size: 24px;
+            --lyric-line-height: 1.2;
+            --lyric-margin-bottom: 1.5rem;
+            --lyric-anim-duration: 2.0s;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Noto Sans KR", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #000;
+            color: white;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            overscroll-behavior: none;
+        }
+
+        #background-blur {
+            position: absolute;
+            top: -10%; left: -10%; width: 120%; height: 120%;
+            background-size: cover;
+            background-position: center;
+            filter: blur(60px) brightness(0.4) saturate(150%);
+            z-index: -1;
+            transition: background-image 1.5s ease-in-out;
+        }
+
+        #lyrics-wrapper {
+            position: relative;
+            flex: 1;
+            overflow: hidden;
+            mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+            touch-action: none;
+        }
+
+        #manual-scroll-container {
+            width: 100%;
+            will-change: transform;
+        }
+
+        #lyrics-content {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .lyric-line-wrapper {
+            width: 100%;
+            margin-bottom: var(--lyric-margin-bottom);
+            transition: transform var(--lyric-anim-duration) cubic-bezier(0.16, 1, 0.3, 1) var(--delay, 0s);
+            will-change: transform;
+        }
+
+        .lyric-line {
+            font-size: var(--lyric-base-size); 
+            line-height: var(--lyric-line-height);
+            font-weight: 700;
+            color: rgba(255, 255, 255, 1);
+            word-spacing: -0.1em;
+            transition: filter 0.8s ease, opacity 0.8s ease, color 0.8s ease;
+            will-change: filter, opacity;
+            word-break: keep-all; 
+            overflow-wrap: break-word;
+            max-width: 85%;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+
+        .lyric-line.active {
+            text-shadow: 0px 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .glass-modal {
+            background: rgba(30, 30, 30, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: all 0.3s ease;
+        }
+
+        .glass-modal.transparent-mode {
+            background: rgba(0, 0, 0, 0.2) !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            border-color: transparent !important;
+            box-shadow: none !important;
+        }
+        
+        .hide-on-drag {
+            transition: opacity 0.3s ease;
+        }
+        
+        .glass-modal.transparent-mode .hide-on-drag {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #22c55e;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #4b5563;
+            border-radius: 2px;
+        }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+
+        .control-btn {
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+        .control-btn:active {
+            transform: scale(0.9);
+        }
+    </style>
+</head>
+<body class="relative flex flex-col h-screen pb-24">
+
+    <!-- 🌟 보안 에러 방지용 로컬 스토리지 보호 -->
+    <script>
+        function safeGetItem(key) {
+            try { return localStorage.getItem(key); } catch(e) { return null; }
+        }
+        function safeSetItem(key, value) {
+            try { localStorage.setItem(key, value); } catch(e) { console.warn("Storage restricted"); }
+        }
+    </script>
+
+    <div id="background-blur"></div>
+
+    <header class="flex justify-between items-center px-6 py-4 sm:px-10 sm:py-6 shrink-0 z-10 w-full max-w-5xl mx-auto min-h-[80px]">
+        <div class="flex items-center gap-4 overflow-hidden w-full mr-4">
+            <img id="album-art" src="https://via.placeholder.com/80" alt="Album Art" class="w-14 h-14 sm:w-20 sm:h-20 rounded-lg shadow-2xl object-cover hidden transition-all duration-500 flex-none">
+            <div id="track-info" class="hidden transition-all duration-500 min-w-0 flex-1">
+                <h1 id="track-title" class="text-xl sm:text-2xl font-bold truncate">재생 중인 곡 없음</h1>
+                <p id="track-artist" class="text-sm sm:text-lg text-gray-300 opacity-80 truncate">Spotify에서 음악을 재생해주세요</p>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-2 sm:gap-3 flex-none">
+            <button id="fullscreen-btn" class="w-12 h-12 flex-none bg-white/10 rounded-full hover:bg-white/20 transition backdrop-blur-md shadow-lg flex items-center justify-center shrink-0">
+                <svg id="icon-fullscreen-enter" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                <svg id="icon-fullscreen-exit" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+            </button>
+            <button id="settings-btn" class="w-12 h-12 flex-none bg-white/10 rounded-full hover:bg-white/20 transition backdrop-blur-md shadow-lg flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+        </div>
+    </header>
+
+    <main id="lyrics-wrapper" class="px-8 sm:px-16 md:px-24 w-full max-w-5xl mx-auto">
+        <div id="manual-scroll-container">
+            <div id="lyrics-content" class="pb-[50vh]">
+                <!-- JS 렌더링 영역 -->
+            </div>
+        </div>
+    </main>
+
+    <div id="media-controls" class="fixed bottom-8 left-1/2 transform -translate-x-1/2 glass-modal rounded-full px-8 py-4 flex items-center justify-center gap-8 z-50 transition-all duration-500 opacity-0 pointer-events-none scale-95 shadow-2xl">
+        <button id="btn-prev" class="control-btn text-white hover:text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="3"></line></svg>
+        </button>
+        <button id="btn-play-pause" class="control-btn text-white hover:scale-110">
+            <svg id="icon-play" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="currentColor" class="hidden"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <svg id="icon-pause" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+        </button>
+        <button id="btn-next" class="control-btn text-white hover:text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="3"></line></svg>
+        </button>
+    </div>
+
+    <!-- 설정 모달 -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300 z-50 flex justify-center items-center p-4 hidden">
+        <div id="modal-content" class="glass-modal w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-2xl font-bold mb-4 hide-on-drag">설정</h2>
+            
+            <div class="space-y-4">
+                <div class="hide-on-drag space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Client ID</label>
+                        <input type="text" id="input-client-id" class="w-full bg-black/50 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-green-500 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Client Secret</label>
+                        <input type="password" id="input-client-secret" class="w-full bg-black/50 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-green-500 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Refresh Token</label>
+                        <input type="password" id="input-refresh-token" class="w-full bg-black/50 border border-gray-600 rounded-lg p-2.5 text-white focus:outline-none focus:border-green-500 text-sm">
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-gray-700 mt-4 space-y-4">
+                    <div class="flex justify-between items-center mb-2 hide-on-drag">
+                        <h3 class="font-bold text-white">상세 UI 조절</h3>
+                        <button id="btn-reset-ui" class="text-xs px-2 py-1 bg-white/10 hover:bg-white/20 text-gray-300 rounded transition">기본값 복원</button>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">가사 싱크(ms)</label>
+                        <input type="range" id="input-sync-offset" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-sync-offset-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">글씨 크기</label>
+                        <input type="range" id="input-font-size" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-font-size-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">가사 높이(%)</label>
+                        <input type="range" id="input-vert-pos" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-vert-pos-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">블러 강도</label>
+                        <input type="range" id="input-blur-amount" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-blur-amount-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">이동 속도(초)</label>
+                        <input type="range" id="input-anim-speed" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-anim-speed-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">시간차(초)</label>
+                        <input type="range" id="input-wave-delay" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-wave-delay-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">일반 가사 속도</label>
+                        <input type="range" id="input-plain-speed" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-plain-speed-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">줄 간격</label>
+                        <input type="range" id="input-line-height" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-line-height-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">문단 간격</label>
+                        <input type="range" id="input-margin" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-margin-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 flex flex-wrap sm:flex-nowrap justify-end gap-3 hide-on-drag">
+                <button id="btn-preview" class="w-full sm:w-auto px-4 py-2 rounded-lg bg-blue-500/20 text-blue-300 font-bold border border-blue-500/50 hover:bg-blue-500/40 transition sm:mr-auto">UI 미리보기</button>
+                <button id="btn-close-modal" class="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">닫기</button>
+                <button id="btn-save-settings" class="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-green-500 text-black font-bold hover:bg-green-400 transition">저장 및 연결</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const modalBg = document.getElementById('settings-modal');
+        const modalContent = document.getElementById('modal-content');
+        const btnSettings = document.getElementById('settings-btn');
+        const btnCloseModal = document.getElementById('btn-close-modal');
+        const btnSaveSettings = document.getElementById('btn-save-settings');
+        const btnPreview = document.getElementById('btn-preview');
+        const btnResetUi = document.getElementById('btn-reset-ui');
+        
+        const btnFullscreen = document.getElementById('fullscreen-btn');
+        const iconFsEnter = document.getElementById('icon-fullscreen-enter');
+        const iconFsExit = document.getElementById('icon-fullscreen-exit');
+
+        const bgBlur = document.getElementById('background-blur');
+        const albumArt = document.getElementById('album-art');
+        const trackInfo = document.getElementById('track-info');
+        const trackTitle = document.getElementById('track-title');
+        const trackArtist = document.getElementById('track-artist');
+        
+        const lyricsWrapper = document.getElementById('lyrics-wrapper');
+        const manualScrollContainer = document.getElementById('manual-scroll-container');
+        const lyricsContent = document.getElementById('lyrics-content');
+
+        const mediaControls = document.getElementById('media-controls');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
+        const btnPlayPause = document.getElementById('btn-play-pause');
+        const iconPlay = document.getElementById('icon-play');
+        const iconPause = document.getElementById('icon-pause');
+
+        let currentAccessToken = '';
+        let currentSongId = '';
+        let isPlaying = false;
+        let isPreviewMode = false; 
+        let lyricsData = []; 
+        let currentProgressMs = 0;
+        let lastSyncTime = 0;
+        let activeLyricIndex = -1;
+        let currentLyricSource = "";
+        
+        let isPlainLyrics = false;
+        let plainScrollSpeed = 20;
+        let plainScrollY = 0;
+        let lastFrameTime = performance.now();
+        let touchStartScrollY = 0;
+        
+        let pollingInterval = null;
+        let animationFrameId = null;
+
+        let animDuration = 2.0;
+        let vertPosRatio = 0.4;
+        let waveDelay = 0.05; 
+        let blurIntensity = 5; 
+        let syncOffsetMs = 0; 
+
+        let isSliderDragging = false;
+        let currentDraggingSlider = null;
+
+        let targetManualScrollOffset = 0;
+        let manualScrollOffset = 0;
+        let isManualScrolling = false;
+        let manualScrollTimer = null;
+        let touchStartY = 0;
+        let touchStartOffset = 0;
+        let isDragging = false;
+
+        const SP_AUTH_API = "https://accounts.spotify.com/api/token";
+        const SP_PLAYER_API = "https://api.spotify.com/v1/me/player";
+
+        let transparencyTimeout;
+        function setTransparentMode() {
+            if(modalContent) modalContent.classList.add('transparent-mode');
+            if(modalBg) {
+                modalBg.classList.remove('bg-black/60', 'backdrop-blur-sm');
+                modalBg.classList.add('bg-black/0');
+            }
+            clearTimeout(transparencyTimeout);
+        }
+
+        function removeTransparentMode() {
+            transparencyTimeout = setTimeout(() => {
+                if(modalContent) modalContent.classList.remove('transparent-mode');
+                if(modalBg) {
+                    modalBg.classList.remove('bg-black/0');
+                    modalBg.classList.add('bg-black/60', 'backdrop-blur-sm');
+                }
+            }, 150);
+        }
+
+        window.addEventListener('mouseup', () => {
+            isSliderDragging = false;
+            currentDraggingSlider = null;
+            removeTransparentMode();
+            updateLyricStyles(activeLyricIndex);
+        });
+
+        window.addEventListener('touchend', () => {
+            isSliderDragging = false;
+            currentDraggingSlider = null;
+            removeTransparentMode();
+            updateLyricStyles(activeLyricIndex);
+        });
+
+        function setupUIControl(idBase, cssVar, suffix, min, max, step, defaultValue, callback) {
+            const slider = document.getElementById(`input-${idBase}`);
+            const numField = document.getElementById(`input-${idBase}-num`);
+            if(!slider || !numField) return;
+            
+            slider.min = numField.min = min;
+            slider.max = numField.max = max;
+            slider.step = numField.step = step;
+
+            const updateValue = (val, save = true) => {
+                val = Math.max(min, Math.min(max, Number(val)));
+                slider.value = val;
+                numField.value = val;
+                if (save) safeSetItem(`sp_${idBase}`, val);
+                if (cssVar) document.documentElement.style.setProperty(cssVar, `${val}${suffix}`);
+                if (callback) callback(val);
+            };
+
+            const saved = safeGetItem(`sp_${idBase}`);
+            updateValue(saved !== null ? saved : defaultValue, false);
+
+            const handleDragStart = (e) => {
+                isSliderDragging = true;
+                currentDraggingSlider = e.target.id;
+                setTransparentMode();
+                updateLyricStyles(activeLyricIndex);
+            };
+
+            slider.addEventListener('mousedown', handleDragStart);
+            slider.addEventListener('touchstart', handleDragStart, {passive: true});
+            
+            slider.addEventListener('input', (e) => {
+                setTransparentMode();
+                updateValue(e.target.value);
+            });
+            numField.addEventListener('change', (e) => updateValue(e.target.value));
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) elem.requestFullscreen();
+                else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            }
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                if(iconFsEnter) iconFsEnter.classList.add('hidden');
+                if(iconFsExit) iconFsExit.classList.remove('hidden');
+            } else {
+                if(iconFsEnter) iconFsEnter.classList.remove('hidden');
+                if(iconFsExit) iconFsExit.classList.add('hidden');
+            }
+        });
+
+        document.addEventListener('webkitfullscreenchange', () => {
+            if (document.webkitFullscreenElement) {
+                if(iconFsEnter) iconFsEnter.classList.add('hidden');
+                if(iconFsExit) iconFsExit.classList.remove('hidden');
+            } else {
+                if(iconFsEnter) iconFsEnter.classList.remove('hidden');
+                if(iconFsExit) iconFsExit.classList.add('hidden');
+            }
+        });
+
+        function updatePadding() {
+            if (lyricsContent && lyricsWrapper) {
+                lyricsContent.style.paddingTop = `${lyricsWrapper.clientHeight * vertPosRatio}px`;
+                if (!isPlainLyrics && activeLyricIndex !== -1) {
+                    const activeWrap = document.getElementById(`lyric-wrap-${activeLyricIndex}`);
+                    if (activeWrap) {
+                        const translateY = activeWrap.offsetTop - (lyricsWrapper.clientHeight * vertPosRatio) + (activeWrap.clientHeight / 2);
+                        const allWraps = document.querySelectorAll('.lyric-line-wrapper');
+                        allWraps.forEach(wrap => {
+                            wrap.style.setProperty('--delay', '0s'); 
+                            wrap.style.transform = `translateY(-${translateY}px)`;
+                        });
+                    }
+                }
+            }
+        }
+
+        function updateLyricStyles(activeIndex) {
+            // 일반 가사일 때는 블러 처리와 포커스 스타일을 모두 해제
+            if (isPlainLyrics) {
+                const lines = document.querySelectorAll('.lyric-line');
+                lines.forEach((line) => {
+                    line.style.filter = 'blur(0px)';
+                    line.style.opacity = '0.8';
+                    line.classList.remove('active');
+                });
+                return;
+            }
+
+            const forceClearBlur = isManualScrolling || (isSliderDragging && currentDraggingSlider !== 'input-blur-amount');
+            
+            const lines = document.querySelectorAll('.lyric-line');
+            lines.forEach((line, index) => {
+                const distance = Math.abs(index - activeIndex);
+                
+                if (forceClearBlur) {
+                    line.style.filter = 'blur(0px)';
+                    line.style.opacity = distance === 0 ? '1' : '0.6';
+                    if (distance === 0) line.classList.add('active');
+                    else line.classList.remove('active');
+                    return;
+                }
+
+                if (distance === 0) {
+                    line.style.filter = 'blur(0px)';
+                    line.style.opacity = '1';
+                    line.classList.add('active');
+                } else {
+                    line.classList.remove('active');
+                    if (distance === 1) {
+                        line.style.filter = `blur(${blurIntensity * 0.25}px)`;
+                        line.style.opacity = '0.6';
+                    } else if (distance === 2) {
+                        line.style.filter = `blur(${blurIntensity * 0.6}px)`;
+                        line.style.opacity = '0.3';
+                    } else {
+                        line.style.filter = `blur(${blurIntensity}px)`;
+                        line.style.opacity = '0.1';
+                    }
+                }
+            });
+        }
+
+        function activateManualScroll() {
+            if (!isManualScrolling) {
+                isManualScrolling = true;
+                updateLyricStyles(activeLyricIndex);
+            }
+            clearTimeout(manualScrollTimer);
+            manualScrollTimer = setTimeout(() => {
+                isManualScrolling = false;
+                updateLyricStyles(activeLyricIndex);
+            }, 3000);
+        }
+
+        if (lyricsWrapper) {
+            lyricsWrapper.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (isPlainLyrics) {
+                    plainScrollY += e.deltaY;
+                } else {
+                    targetManualScrollOffset += e.deltaY;
+                }
+                activateManualScroll();
+            }, {passive: false});
+
+            lyricsWrapper.addEventListener('touchstart', (e) => {
+                touchStartY = e.touches[0].clientY;
+                if (isPlainLyrics) {
+                    touchStartScrollY = plainScrollY;
+                } else {
+                    touchStartOffset = targetManualScrollOffset;
+                }
+                isDragging = false;
+                activateManualScroll();
+            }, {passive: true});
+
+            lyricsWrapper.addEventListener('touchmove', (e) => {
+                if (!isManualScrolling) return;
+                const deltaY = touchStartY - e.touches[0].clientY;
+                if (Math.abs(deltaY) > 10) {
+                    isDragging = true;
+                    e.preventDefault(); 
+                }
+                
+                if (isPlainLyrics) {
+                    plainScrollY = touchStartScrollY + deltaY;
+                } else {
+                    targetManualScrollOffset = touchStartOffset + deltaY;
+                }
+                activateManualScroll();
+            }, {passive: false});
+        }
+
+        function updatePlayPauseIcon() {
+            if (isPlaying) {
+                if(iconPlay) iconPlay.classList.add('hidden');
+                if(iconPause) iconPause.classList.remove('hidden');
+            } else {
+                if(iconPlay) iconPlay.classList.remove('hidden');
+                if(iconPause) iconPause.classList.add('hidden');
+            }
+        }
+
+        function showMediaControls() {
+            if(mediaControls) {
+                mediaControls.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+                mediaControls.classList.add('opacity-100', 'pointer-events-auto', 'scale-100');
+            }
+        }
+
+        function hideMediaControls() {
+            if(mediaControls) {
+                mediaControls.classList.remove('opacity-100', 'pointer-events-auto', 'scale-100');
+                mediaControls.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+            }
+        }
+
+        async function togglePlayPause() {
+            if (isPreviewMode) {
+                if (isPlaying) {
+                    currentProgressMs += (performance.now() - lastSyncTime);
+                    isPlaying = false;
+                } else {
+                    lastSyncTime = performance.now();
+                    isPlaying = true;
+                }
+                updatePlayPauseIcon();
+                return;
+            }
+
+            if (!currentAccessToken) return;
+            const endpoint = isPlaying ? 'pause' : 'play';
+            try {
+                await fetch(`${SP_PLAYER_API}/${endpoint}`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${currentAccessToken}` }
+                });
+                
+                if (isPlaying) {
+                    currentProgressMs += (performance.now() - lastSyncTime);
+                    isPlaying = false;
+                } else {
+                    lastSyncTime = performance.now();
+                    isPlaying = true;
+                }
+                updatePlayPauseIcon();
+                setTimeout(pollSpotify, 1000);
+            } catch (error) {}
+        }
+
+        async function skipToNext() {
+            if (isPreviewMode) return;
+            if (!currentAccessToken) return;
+            try {
+                await fetch(`${SP_PLAYER_API}/next`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentAccessToken}` }
+                });
+                setTimeout(pollSpotify, 1000);
+            } catch (error) {}
+        }
+
+        async function skipToPrevious() {
+            if (isPreviewMode) return;
+            if (!currentAccessToken) return;
+            try {
+                await fetch(`${SP_PLAYER_API}/previous`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentAccessToken}` }
+                });
+                setTimeout(pollSpotify, 1000);
+            } catch (error) {}
+        }
+
+        async function seekSpotify(positionMs) {
+            if (!currentAccessToken) return;
+            try {
+                await fetch(`${SP_PLAYER_API}/seek?position_ms=${positionMs}`, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${currentAccessToken}` }
+                });
+                currentProgressMs = positionMs;
+                lastSyncTime = performance.now();
+                if (!isPlaying) togglePlayPause();
+            } catch (error) {}
+        }
+
+        function renderEmptyState(isInitial = true) {
+            if(!lyricsContent) return;
+            if (isInitial) {
+                if(albumArt) albumArt.classList.add('hidden');
+                if(trackInfo) trackInfo.classList.add('hidden');
+                if(bgBlur) bgBlur.style.backgroundImage = 'none';
+            }
+            
+            const message = isInitial 
+                ? "설정(우측 상단)에서 인증 정보를 입력하거나,<br>설정 창의 'UI 미리보기' 버튼을 눌러보세요."
+                : "Spotify에서 음악을 재생해주세요.<br><span class='text-sm font-normal'>(일시정지 중이거나 앱이 닫혀있습니다)</span>";
+
+            lyricsContent.innerHTML = `
+                <div class="lyric-line-wrapper" style="transform: translateY(0);">
+                    <div class="lyric-line text-center mt-[30vh] opacity-50 text-xl" style="max-width:100%; filter:blur(0px); font-size:1.25rem;">
+                        ${message}
+                    </div>
+                </div>`;
+            hideMediaControls();
+        }
+
+        function updateTrackUI(title, artist, imageUrl) {
+            if (trackTitle) trackTitle.textContent = title;
+            if (trackArtist) trackArtist.textContent = artist;
+            
+            if (imageUrl) {
+                if (albumArt) {
+                    albumArt.src = imageUrl;
+                    albumArt.classList.remove('hidden');
+                }
+                if (bgBlur) {
+                    bgBlur.style.backgroundImage = `url('${imageUrl}')`;
+                }
+            } else {
+                if (albumArt) albumArt.classList.add('hidden');
+                if (bgBlur) bgBlur.style.backgroundImage = 'none';
+            }
+            
+            if (trackInfo) trackInfo.classList.remove('hidden');
+        }
+
+        function cleanTitle(title) {
+            return title
+                .replace(/\(feat\..*?\)/ig, '')
+                .replace(/\[feat\..*?\]/ig, '')
+                .replace(/- .*?(Remaster|Live|Radio|Version).*/ig, '')
+                .trim();
+        }
+
+        // 🌟 아티스트 및 곡 재생 시간(Duration) 이중 검증이 포함된 LRCLIB 로직
+        async function fetchLrcLib(queryStr, targetArtist, targetDurationSec) {
+            try {
+                const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(queryStr)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0) {
+                        const normalize = (str) => str ? str.toLowerCase().replace(/[^a-z0-9가-힣]/g, '') : '';
+                        const expectedArtist = normalize(targetArtist);
+                        const normalizedQuery = normalize(queryStr);
+
+                        // 교차 검증: 아티스트 문자열 포함 여부 OR 재생 시간 일치 여부
+                        let validSongs = data.filter(song => {
+                            const apiArtist = normalize(song.artistName);
+                            
+                            // 1. 아티스트 이름이 포함되어 있는가? (양방향 포함 검사)
+                            const isArtistMatch = apiArtist.includes(expectedArtist) || expectedArtist.includes(apiArtist);
+                            
+                            // 2. 곡 길이가 스포티파이 곡 길이와 일치하는가? (오차 8초 허용)
+                            const isDurationMatch = targetDurationSec && song.duration && Math.abs(song.duration - targetDurationSec) <= 8;
+
+                            // 아티스트가 일치하거나 곡 길이가 일치하면 올바른 곡으로 간주
+                            if (isArtistMatch || isDurationMatch) return true;
+                            
+                            // 제목만으로 검색한 경우, 아티스트나 길이 매칭이 안 되면 다른 곡임
+                            if (!normalizedQuery.includes(expectedArtist)) return false;
+
+                            // 가수명이 포함된 검색어일 경우 API 검색 정확도를 어느정도 신뢰
+                            return true;
+                        });
+
+                        if (validSongs.length > 0) {
+                            const synced = validSongs.find(song => song.syncedLyrics);
+                            if (synced) return { type: 'synced', text: synced.syncedLyrics };
+                            
+                            const plain = validSongs.find(song => song.plainLyrics);
+                            if (plain) return { type: 'plain', text: plain.plainLyrics };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('LRCLIB Fetch Error:', e);
+            } 
+            return null;
+        }
+
+        async function fetchLyrics(title, artist, durationMs) {
+            if(!lyricsContent) return;
+            
+            lyricsContent.innerHTML = `
+                <div class="lyric-line-wrapper" style="transform: translateY(0);">
+                    <div class="lyric-line text-center mt-[30vh] opacity-50 text-xl" style="max-width:100%; filter:blur(0px); font-size:1.25rem;">
+                        LRCLIB 에서 가사를 탐색하는 중입니다...
+                    </div>
+                </div>`;
+                
+            lyricsData = [];
+            activeLyricIndex = -1;
+            currentLyricSource = "";
+            isPlainLyrics = false;
+
+            const firstArtist = artist.split(',')[0].trim();
+            const cleanedTitle = cleanTitle(title);
+            const durationSec = durationMs ? Math.round(durationMs / 1000) : 0;
+            
+            const queries = [
+                `${title} ${firstArtist}`,
+                `${cleanedTitle} ${firstArtist}`,
+                title,
+                cleanedTitle
+            ];
+
+            const uniqueQueries = [...new Set(queries)];
+
+            let foundLrc = null;
+
+            for (let q of uniqueQueries) {
+                foundLrc = await fetchLrcLib(q, firstArtist, durationSec);
+                if (foundLrc) break; 
+            }
+
+            if (foundLrc) {
+                isPlainLyrics = (foundLrc.type === 'plain');
+                currentLyricSource = "LRCLIB" + (isPlainLyrics ? " (Plain Text)" : "");
+                
+                if (isPlainLyrics) {
+                    parsePlainLyrics(foundLrc.text);
+                } else {
+                    parseLRC(foundLrc.text);
+                }
+                renderLyrics();
+            } else {
+                lyricsContent.innerHTML = `
+                    <div class="lyric-line-wrapper" style="transform: translateY(0);">
+                        <div class="lyric-line text-center mt-[30vh] opacity-50 text-xl" style="max-width:100%; filter:blur(0px); font-size:1.25rem;">
+                            해당 곡의 가사를 찾을 수 없습니다.
+                        </div>
+                    </div>`;
+            }
+        }
+
+        function parseLRC(lrcText) {
+            const lines = lrcText.split('\n');
+            const timeRegEx = /\[(\d{2}):(\d{2})(?:\.(\d{1,3}))?\](.*)/;
+            
+            lyricsData = [];
+            for (let line of lines) {
+                const match = line.match(timeRegEx);
+                if (match) {
+                    const min = parseInt(match[1], 10);
+                    const sec = parseInt(match[2], 10);
+                    let msStr = match[3] || '000';
+                    if (msStr.length === 1) msStr += '00';
+                    else if (msStr.length === 2) msStr += '0';
+                    const ms = parseInt(msStr, 10);
+                    const text = match[4].trim();
+                    if (text) lyricsData.push({ time: (min * 60 + sec) * 1000 + ms, text: text });
+                }
+            }
+            lyricsData.sort((a, b) => a.time - b.time);
+        }
+
+        function parsePlainLyrics(text) {
+            const lines = text.split('\n');
+            lyricsData = [];
+            for (let line of lines) {
+                if (line.trim()) {
+                    lyricsData.push({ time: 0, text: line.trim() });
+                }
+            }
+        }
+
+        function renderLyrics() {
+            if(!lyricsContent || !lyricsWrapper) return;
+            lyricsContent.innerHTML = '';
+            lyricsContent.style.paddingTop = `${lyricsWrapper.clientHeight * vertPosRatio}px`;
+            
+            lyricsData.forEach((lyric, index) => {
+                const wrap = document.createElement('div');
+                wrap.className = 'lyric-line-wrapper';
+                wrap.id = `lyric-wrap-${index}`;
+                wrap.style.setProperty('--delay', '0s');
+
+                const div = document.createElement('div');
+                div.className = 'lyric-line';
+                div.id = `lyric-${index}`;
+                div.textContent = lyric.text;
+                
+                div.onclick = () => { 
+                    if(isDragging || isPlainLyrics) return; // 일반 가사는 클릭 스킵 무효
+                    if(!isPreviewMode) seekSpotify(lyric.time); 
+                    
+                    targetManualScrollOffset = 0;
+                    isManualScrolling = false;
+                    updateLyricStyles(activeLyricIndex);
+                };
+                
+                wrap.appendChild(div);
+                lyricsContent.appendChild(wrap);
+            });
+
+            if (currentLyricSource) {
+                const sourceDiv = document.createElement('div');
+                sourceDiv.className = 'text-center text-xs text-gray-500 mt-16 mb-[35vh] opacity-40 uppercase tracking-widest font-normal';
+                sourceDiv.textContent = `Lyrics provided by ${currentLyricSource}`;
+                lyricsContent.appendChild(sourceDiv);
+            }
+
+            if (isPlainLyrics) {
+                plainScrollY = 0;
+                if (manualScrollContainer) manualScrollContainer.style.transform = `translateY(0px)`;
+                const allWraps = document.querySelectorAll('.lyric-line-wrapper');
+                allWraps.forEach(wrap => wrap.style.transform = `translateY(0px)`);
+                updateLyricStyles(-1); 
+            } else {
+                manualScrollOffset = 0;
+                targetManualScrollOffset = 0;
+            }
+        }
+
+        function updateProgressLoop() {
+            const now = performance.now();
+            let deltaTime = now - lastFrameTime;
+            if (deltaTime > 100) deltaTime = 16; 
+            lastFrameTime = now;
+
+            if (isPlainLyrics) {
+                if (isPlaying && !isManualScrolling) {
+                    plainScrollY += plainScrollSpeed * (deltaTime / 1000);
+                }
+                
+                if (manualScrollContainer) {
+                    manualScrollContainer.style.transform = `translateY(-${plainScrollY}px)`;
+                }
+            } 
+            else {
+                if (!isManualScrolling && Math.abs(targetManualScrollOffset) > 0.5) {
+                    targetManualScrollOffset += (0 - targetManualScrollOffset) * 0.05; 
+                } else if (!isManualScrolling) {
+                    targetManualScrollOffset = 0;
+                }
+                manualScrollOffset += (targetManualScrollOffset - manualScrollOffset) * 0.12;
+                
+                if (manualScrollContainer) {
+                    manualScrollContainer.style.transform = `translateY(-${manualScrollOffset}px)`;
+                }
+
+                if (isPlaying && lyricsData.length > 0) {
+                    const estimatedProgress = currentProgressMs + (now - lastSyncTime) + syncOffsetMs;
+
+                    if (isPreviewMode && estimatedProgress > 45000) {
+                        currentProgressMs = 0;
+                        lastSyncTime = performance.now();
+                        activeLyricIndex = -1;
+                        
+                        const allWraps = document.querySelectorAll('.lyric-line-wrapper');
+                        allWraps.forEach(wrap => wrap.style.transform = `translateY(0px)`);
+                        updateLyricStyles(-1);
+                    }
+
+                    let newActiveIndex = -1;
+                    for (let i = 0; i < lyricsData.length; i++) {
+                        if (estimatedProgress >= lyricsData[i].time) newActiveIndex = i;
+                        else break;
+                    }
+
+                    if (newActiveIndex !== activeLyricIndex && newActiveIndex !== -1) {
+                        const isJump = activeLyricIndex !== -1 && Math.abs(newActiveIndex - activeLyricIndex) > 2;
+
+                        activeLyricIndex = newActiveIndex;
+                        const activeWrap = document.getElementById(`lyric-wrap-${activeLyricIndex}`);
+                        
+                        if (activeWrap) {
+                            updateLyricStyles(activeLyricIndex);
+
+                            const offsetTop = activeWrap.offsetTop;
+                            const elementCenter = activeWrap.clientHeight / 2;
+                            const targetCenter = lyricsWrapper.clientHeight * vertPosRatio;
+                            const translateY = offsetTop - targetCenter + elementCenter;
+
+                            const allWraps = document.querySelectorAll('.lyric-line-wrapper');
+                            allWraps.forEach((wrap, index) => {
+                                if (isJump) {
+                                    wrap.style.setProperty('--delay', `0s`);
+                                } else {
+                                    const distance = Math.abs(index - activeLyricIndex);
+                                    const delay = Math.min(distance, 15) * waveDelay; 
+                                    wrap.style.setProperty('--delay', `${delay}s`);
+                                }
+                                wrap.style.transform = `translateY(-${translateY}px)`;
+                            });
+                        }
+                    }
+                }
+            }
+
+            animationFrameId = requestAnimationFrame(updateProgressLoop);
+        }
+
+        function startPreviewMode() {
+            isPreviewMode = true;
+            if(modalBg) modalBg.classList.add('hidden');
+            
+            if(pollingInterval) clearInterval(pollingInterval);
+            if(animationFrameId) cancelAnimationFrame(animationFrameId);
+
+            const fakeImageUrl = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=400&auto=format&fit=crop";
+            updateTrackUI("UI 미리보기 체험", "Apple Music Style", fakeImageUrl);
+            showMediaControls();
+
+            const fakeLRC = `[00:00.000] (미리보기 모드 시작)
+[00:03.000] 이제 외부 API 우회 없이 LRCLIB 하나만 확실하게 불러옵니다!
+[00:06.000] 아티스트 이름 교차 검증 및 스포티파이 재생 시간(Duration) 검증 추가!
+[00:09.000] 제목이 같아도 엉뚱한 가수가 불려오는 현상을 원천 차단합니다.
+[00:12.000] 이제 설정창을 열고 아무 슬라이더나 잡아보세요.
+[00:15.000] 모달창의 배경 블러가 완전히 100% 투명하게 풀릴 뿐만 아니라,
+[00:18.000] 배경에 깔려있던 가사들의 블러까지 모두 선명한 0으로 초기화됩니다!
+[00:21.000] 이제 화면 구성을 눈으로 직접 보면서 아주 쾌적하게 조절할 수 있습니다.
+[00:24.000] 자, 3초 뒤에 빠르게 넘어가는 구간이 시작됩니다.
+[00:27.000] 하나
+[00:28.000] 둘
+[00:29.000] 셋
+[00:30.000] 넷
+[00:31.000] 다섯!
+[00:34.000] 가장 직관적이고 완벽한 Apple Music 스타일 뷰어입니다.
+[00:38.000] (잠시 후 다시 처음으로 돌아갑니다...)`;
+
+            isPlainLyrics = false;
+            currentLyricSource = "PREVIEW MODE (Synced)"; 
+            parseLRC(fakeLRC);
+            renderLyrics();
+
+            isPlaying = true;
+            updatePlayPauseIcon();
+            currentProgressMs = 0;
+            lastFrameTime = performance.now();
+            lastSyncTime = performance.now();
+            updateProgressLoop();
+        }
+
+        async function saveSettingsAndStart() {
+            const clientIdInput = document.getElementById('input-client-id');
+            const clientSecretInput = document.getElementById('input-client-secret');
+            const refreshTokenInput = document.getElementById('input-refresh-token');
+
+            if(!clientIdInput || !clientSecretInput || !refreshTokenInput) return;
+
+            const clientId = clientIdInput.value.trim();
+            const clientSecret = clientSecretInput.value.trim();
+            const refreshToken = refreshTokenInput.value.trim();
+
+            if (!clientId || !clientSecret || !refreshToken) {
+                alert('API 필수 정보를 모두 입력해주세요. (체험만 원하시면 UI 미리보기를 눌러주세요)');
+                return;
+            }
+
+            safeSetItem('sp_client_id', clientId);
+            safeSetItem('sp_client_secret', clientSecret);
+            safeSetItem('sp_refresh_token', refreshToken);
+            
+            isPreviewMode = false;
+            if(modalBg) modalBg.classList.add('hidden');
+            startApp();
+        }
+
+        async function startApp() {
+            renderEmptyState(true);
+            const elem = document.querySelector('.lyric-line');
+            if(elem) elem.textContent = 'Spotify 연결 중...';
+            
+            const success = await refreshAccessToken();
+            if (success) {
+                if(pollingInterval) clearInterval(pollingInterval);
+                if(animationFrameId) cancelAnimationFrame(animationFrameId);
+                
+                pollSpotify();
+                pollingInterval = setInterval(pollSpotify, 3000); 
+                lastFrameTime = performance.now();
+                updateProgressLoop();
+            }
+        }
+
+        async function refreshAccessToken() {
+            const clientId = safeGetItem('sp_client_id');
+            const clientSecret = safeGetItem('sp_client_secret');
+            const refreshToken = safeGetItem('sp_refresh_token');
+            if(!clientId || !clientSecret || !refreshToken) return false;
+
+            const authString = btoa(`${clientId.trim()}:${clientSecret.trim()}`);
+            const bodyStr = `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken.trim())}`;
+            
+            const fetchOptions = {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Basic ${authString}`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: bodyStr
+            };
+
+            try {
+                let response;
+                try {
+                    response = await fetch('https://accounts.spotify.com/api/token', fetchOptions);
+                } catch(e) {
+                    response = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://accounts.spotify.com/api/token'), fetchOptions);
+                }
+
+                if (!response.ok) throw new Error('Token refresh failed');
+                
+                const data = await response.json();
+                currentAccessToken = data.access_token;
+                return true;
+            } catch (error) {
+                renderEmptyState(true);
+                const elem = document.querySelector('.lyric-line');
+                if(elem) {
+                    elem.innerHTML = '인증 실패.<br>토큰을 확인해주세요.';
+                    elem.classList.add('text-red-400');
+                }
+                if(modalBg) modalBg.classList.remove('hidden');
+                return false;
+            }
+        }
+
+        async function pollSpotify() {
+            if (!currentAccessToken || isPreviewMode) return;
+
+            try {
+                const response = await fetch(`${SP_PLAYER_API}/currently-playing`, {
+                    headers: { 'Authorization': `Bearer ${currentAccessToken}` }
+                });
+
+                if (response.status === 204) {
+                    isPlaying = false;
+                    updatePlayPauseIcon();
+                    renderEmptyState(false);
+                    return;
+                }
+                
+                if (response.status === 401) {
+                    await refreshAccessToken();
+                    return;
+                }
+
+                const data = await response.json();
+                if (!data || !data.item) return;
+
+                showMediaControls();
+
+                if (isPlaying !== data.is_playing) {
+                    isPlaying = data.is_playing;
+                    updatePlayPauseIcon();
+                    if(isPlaying) {
+                        lastSyncTime = performance.now();
+                        lastFrameTime = performance.now();
+                    }
+                }
+                
+                if (isPlaying) {
+                    currentProgressMs = data.progress_ms;
+                    lastSyncTime = performance.now(); 
+                }
+
+                const newSongId = data.item.id;
+                
+                if (currentSongId !== newSongId) {
+                    currentSongId = newSongId;
+                    updateTrackUI(data.item.name, data.item.artists[0].name, data.item.album.images[0]?.url);
+                    // 곡 재생 시간(duration_ms)을 가사 검색 함수로 넘김
+                    fetchLyrics(data.item.name, data.item.artists[0].name, data.item.duration_ms);
+                }
+            } catch (error) {}
+        }
+
+        function init() {
+            const inputClientId = document.getElementById('input-client-id');
+            const inputClientSecret = document.getElementById('input-client-secret');
+            const inputRefreshToken = document.getElementById('input-refresh-token');
+
+            if(inputClientId) inputClientId.value = safeGetItem('sp_client_id') || '';
+            if(inputClientSecret) inputClientSecret.value = safeGetItem('sp_client_secret') || '';
+            if(inputRefreshToken) inputRefreshToken.value = safeGetItem('sp_refresh_token') || '';
+            
+            setupUIControl('sync-offset', null, '', -5000, 5000, 50, 0, (val) => { syncOffsetMs = Number(val); });
+            setupUIControl('font-size', '--lyric-base-size', 'px', 16, 64, 1, 24);
+            setupUIControl('vert-pos', null, '', 10, 90, 1, 40, (val) => {
+                vertPosRatio = val / 100;
+                updatePadding();
+            });
+            setupUIControl('blur-amount', null, '', 0, 20, 1, 5, (val) => { 
+                blurIntensity = val; 
+                if(activeLyricIndex !== -1) updateLyricStyles(activeLyricIndex); 
+            });
+            setupUIControl('anim-speed', '--lyric-anim-duration', 's', 0.1, 5.0, 0.1, 2.0, (val) => { animDuration = val; });
+            setupUIControl('wave-delay', null, '', 0.00, 1.00, 0.01, 0.05, (val) => { waveDelay = val; });
+            setupUIControl('plain-speed', null, '', 0, 100, 1, 20, (val) => { plainScrollSpeed = Number(val); });
+            setupUIControl('line-height', '--lyric-line-height', '', 1.0, 3.0, 0.05, 1.2);
+            setupUIControl('margin', '--lyric-margin-bottom', 'rem', 0.5, 5.0, 0.1, 1.5);
+
+            if(btnSettings && modalBg) btnSettings.addEventListener('click', () => modalBg.classList.remove('hidden'));
+            if(btnCloseModal && modalBg) btnCloseModal.addEventListener('click', () => modalBg.classList.add('hidden'));
+            if(btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettingsAndStart);
+            if(btnPreview) btnPreview.addEventListener('click', startPreviewMode);
+            if(btnFullscreen) btnFullscreen.addEventListener('click', toggleFullScreen);
+
+            if(btnPrev) btnPrev.addEventListener('click', skipToPrevious);
+            if(btnNext) btnNext.addEventListener('click', skipToNext);
+            if(btnPlayPause) btnPlayPause.addEventListener('click', togglePlayPause);
+
+            if(btnResetUi) {
+                btnResetUi.addEventListener('click', () => {
+                    const defaultValues = {
+                        'sync-offset': 0,
+                        'font-size': 24,
+                        'vert-pos': 40,
+                        'blur-amount': 5,
+                        'anim-speed': 2.0,
+                        'wave-delay': 0.05,
+                        'plain-speed': 20,
+                        'line-height': 1.2,
+                        'margin': 1.5
+                    };
+                    for (const [key, val] of Object.entries(defaultValues)) {
+                        const slider = document.getElementById(`input-${key}`);
+                        if(slider) {
+                            slider.value = val;
+                            slider.dispatchEvent(new Event('input'));
+                        }
+                    }
+                });
+            }
+
+            window.addEventListener('resize', updatePadding);
+
+            if (safeGetItem('sp_refresh_token')) {
+                if(modalBg) modalBg.classList.add('hidden');
+                startApp();
+            } else {
+                if(modalBg) modalBg.classList.remove('hidden');
+                renderEmptyState(true);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

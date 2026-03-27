@@ -13,6 +13,7 @@
             --lyric-line-height: 1.2;
             --lyric-margin-bottom: 1.5rem;
             --lyric-anim-duration: 2.0s;
+            --ui-scale: 1.0; /* UI 크기 조절 변수 추가 */
         }
 
         body {
@@ -134,11 +135,21 @@
         .control-btn:active {
             transform: scale(0.9);
         }
+
+        /* 미디어 컨트롤러 크기 조절 및 숨기기 기능 적용 */
+        #media-controls {
+            transform: translateX(-50%) scale(var(--ui-scale, 1)) !important;
+        }
+        #media-controls.scale-95 {
+            transform: translateX(-50%) scale(calc(var(--ui-scale, 1) * 0.95)) !important;
+        }
+        body.hide-media-controls #media-controls {
+            display: none !important;
+        }
     </style>
 </head>
 <body class="relative flex flex-col h-screen pb-24">
 
-    <!-- 🌟 보안 에러 방지용 로컬 스토리지 보호 -->
     <script>
         function safeGetItem(key) {
             try { return localStorage.getItem(key); } catch(e) { return null; }
@@ -173,8 +184,7 @@
     <main id="lyrics-wrapper" class="px-8 sm:px-16 md:px-24 w-full max-w-5xl mx-auto">
         <div id="manual-scroll-container">
             <div id="lyrics-content" class="pb-[50vh]">
-                <!-- JS 렌더링 영역 -->
-            </div>
+                </div>
         </div>
     </main>
 
@@ -191,7 +201,6 @@
         </button>
     </div>
 
-    <!-- 설정 모달 -->
     <div id="settings-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300 z-50 flex justify-center items-center p-4 hidden">
         <div id="modal-content" class="glass-modal w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <h2 class="text-2xl font-bold mb-4 hide-on-drag">설정</h2>
@@ -225,9 +234,23 @@
                     </div>
 
                     <div class="flex items-center gap-3">
-                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">글씨 크기</label>
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">가사 글씨 크기</label>
                         <input type="range" id="input-font-size" class="w-full appearance-none bg-transparent">
                         <input type="number" id="input-font-size-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">컨트롤러 크기</label>
+                        <input type="range" id="input-ui-scale" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-ui-scale-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
+                    <div class="flex items-center justify-between hide-on-drag py-1">
+                        <label class="w-auto text-sm text-gray-400 shrink-0">컨트롤러 UI 숨기기</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="input-hide-controls" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                        </label>
                     </div>
 
                     <div class="flex items-center gap-3">
@@ -711,7 +734,6 @@
                 .trim();
         }
 
-        // 🌟 아티스트 및 곡 재생 시간(Duration) 이중 검증이 포함된 LRCLIB 로직
         async function fetchLrcLib(queryStr, targetArtist, targetDurationSec) {
             try {
                 const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(queryStr)}`);
@@ -722,23 +744,13 @@
                         const expectedArtist = normalize(targetArtist);
                         const normalizedQuery = normalize(queryStr);
 
-                        // 교차 검증: 아티스트 문자열 포함 여부 OR 재생 시간 일치 여부
                         let validSongs = data.filter(song => {
                             const apiArtist = normalize(song.artistName);
-                            
-                            // 1. 아티스트 이름이 포함되어 있는가? (양방향 포함 검사)
                             const isArtistMatch = apiArtist.includes(expectedArtist) || expectedArtist.includes(apiArtist);
-                            
-                            // 2. 곡 길이가 스포티파이 곡 길이와 일치하는가? (오차 8초 허용)
                             const isDurationMatch = targetDurationSec && song.duration && Math.abs(song.duration - targetDurationSec) <= 8;
 
-                            // 아티스트가 일치하거나 곡 길이가 일치하면 올바른 곡으로 간주
                             if (isArtistMatch || isDurationMatch) return true;
-                            
-                            // 제목만으로 검색한 경우, 아티스트나 길이 매칭이 안 되면 다른 곡임
                             if (!normalizedQuery.includes(expectedArtist)) return false;
-
-                            // 가수명이 포함된 검색어일 경우 API 검색 정확도를 어느정도 신뢰
                             return true;
                         });
 
@@ -982,21 +994,20 @@
             showMediaControls();
 
             const fakeLRC = `[00:00.000] (미리보기 모드 시작)
-[00:03.000] 이제 외부 API 우회 없이 LRCLIB 하나만 확실하게 불러옵니다!
-[00:06.000] 아티스트 이름 교차 검증 및 스포티파이 재생 시간(Duration) 검증 추가!
-[00:09.000] 제목이 같아도 엉뚱한 가수가 불려오는 현상을 원천 차단합니다.
-[00:12.000] 이제 설정창을 열고 아무 슬라이더나 잡아보세요.
+[00:03.000] 설정에서 재생 컨트롤러의 크기를 늘리거나 줄일 수 있습니다!
+[00:06.000] 또한 컨트롤러가 화면을 가리는 게 싫다면,
+[00:09.000] '컨트롤러 UI 숨기기' 스위치로 아예 끌 수도 있습니다.
+[00:12.000] 이제 화면 구성을 눈으로 직접 보면서 쾌적하게 조절해보세요.
 [00:15.000] 모달창의 배경 블러가 완전히 100% 투명하게 풀릴 뿐만 아니라,
 [00:18.000] 배경에 깔려있던 가사들의 블러까지 모두 선명한 0으로 초기화됩니다!
-[00:21.000] 이제 화면 구성을 눈으로 직접 보면서 아주 쾌적하게 조절할 수 있습니다.
-[00:24.000] 자, 3초 뒤에 빠르게 넘어가는 구간이 시작됩니다.
-[00:27.000] 하나
-[00:28.000] 둘
-[00:29.000] 셋
-[00:30.000] 넷
-[00:31.000] 다섯!
-[00:34.000] 가장 직관적이고 완벽한 Apple Music 스타일 뷰어입니다.
-[00:38.000] (잠시 후 다시 처음으로 돌아갑니다...)`;
+[00:21.000] 자, 3초 뒤에 빠르게 넘어가는 구간이 시작됩니다.
+[00:24.000] 하나
+[00:25.000] 둘
+[00:26.000] 셋
+[00:27.000] 넷
+[00:28.000] 다섯!
+[00:31.000] 가장 직관적이고 완벽한 Apple Music 스타일 뷰어입니다.
+[00:35.000] (잠시 후 다시 처음으로 돌아갑니다...)`;
 
             isPlainLyrics = false;
             currentLyricSource = "PREVIEW MODE (Synced)"; 
@@ -1140,7 +1151,6 @@
                 if (currentSongId !== newSongId) {
                     currentSongId = newSongId;
                     updateTrackUI(data.item.name, data.item.artists[0].name, data.item.album.images[0]?.url);
-                    // 곡 재생 시간(duration_ms)을 가사 검색 함수로 넘김
                     fetchLyrics(data.item.name, data.item.artists[0].name, data.item.duration_ms);
                 }
             } catch (error) {}
@@ -1170,6 +1180,29 @@
             setupUIControl('plain-speed', null, '', 0, 100, 1, 20, (val) => { plainScrollSpeed = Number(val); });
             setupUIControl('line-height', '--lyric-line-height', '', 1.0, 3.0, 0.05, 1.2);
             setupUIControl('margin', '--lyric-margin-bottom', 'rem', 0.5, 5.0, 0.1, 1.5);
+            
+            // 🔥 UI 크기 조절 초기화
+            setupUIControl('ui-scale', null, '', 0.5, 2.0, 0.1, 1.0, (val) => { 
+                document.documentElement.style.setProperty('--ui-scale', val); 
+            });
+
+            // 🔥 재생 컨트롤러 숨기기 초기화
+            const checkHideControls = document.getElementById('input-hide-controls');
+            if (checkHideControls) {
+                const isHiddenSaved = safeGetItem('sp_hide_controls') === 'true';
+                checkHideControls.checked = isHiddenSaved;
+                if (isHiddenSaved) document.body.classList.add('hide-media-controls');
+                
+                checkHideControls.addEventListener('change', (e) => {
+                    const isHidden = e.target.checked;
+                    safeSetItem('sp_hide_controls', isHidden);
+                    if (isHidden) {
+                        document.body.classList.add('hide-media-controls');
+                    } else {
+                        document.body.classList.remove('hide-media-controls');
+                    }
+                });
+            }
 
             if(btnSettings && modalBg) btnSettings.addEventListener('click', () => modalBg.classList.remove('hidden'));
             if(btnCloseModal && modalBg) btnCloseModal.addEventListener('click', () => modalBg.classList.add('hidden'));
@@ -1192,7 +1225,8 @@
                         'wave-delay': 0.05,
                         'plain-speed': 20,
                         'line-height': 1.2,
-                        'margin': 1.5
+                        'margin': 1.5,
+                        'ui-scale': 1.0 // UI 크기 기본값 포함
                     };
                     for (const [key, val] of Object.entries(defaultValues)) {
                         const slider = document.getElementById(`input-${key}`);
@@ -1200,6 +1234,12 @@
                             slider.value = val;
                             slider.dispatchEvent(new Event('input'));
                         }
+                    }
+
+                    // 숨기기 토글 기본값 복원
+                    if (checkHideControls) {
+                        checkHideControls.checked = false;
+                        checkHideControls.dispatchEvent(new Event('change'));
                     }
                 });
             }

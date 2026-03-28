@@ -13,7 +13,7 @@
             --lyric-line-height: 1.2;
             --lyric-margin-bottom: 1.5rem;
             --lyric-anim-duration: 2.0s;
-            --ui-scale: 1.0; /* UI 크기 조절 변수 추가 */
+            --ui-scale: 1.0; 
         }
 
         body {
@@ -227,6 +227,28 @@
                         <button id="btn-reset-ui" class="text-xs px-2 py-1 bg-white/10 hover:bg-white/20 text-gray-300 rounded transition">기본값 복원</button>
                     </div>
                     
+                    <div class="flex items-center justify-between hide-on-drag py-1">
+                        <label class="w-auto text-sm text-gray-400 shrink-0">화면 항상 켜기 (Wake Lock)</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="input-keep-awake" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center justify-between hide-on-drag py-1">
+                        <label class="w-auto text-sm text-gray-400 shrink-0">컨트롤러 UI 숨기기</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="input-hide-controls" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">컨트롤러 크기</label>
+                        <input type="range" id="input-ui-scale" class="w-full appearance-none bg-transparent">
+                        <input type="number" id="input-ui-scale-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
+                    </div>
+
                     <div class="flex items-center gap-3">
                         <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">가사 싱크(ms)</label>
                         <input type="range" id="input-sync-offset" class="w-full appearance-none bg-transparent">
@@ -237,20 +259,6 @@
                         <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">가사 글씨 크기</label>
                         <input type="range" id="input-font-size" class="w-full appearance-none bg-transparent">
                         <input type="number" id="input-font-size-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
-                    </div>
-                    
-                    <div class="flex items-center gap-3">
-                        <label class="w-24 text-sm text-gray-400 shrink-0 hide-on-drag">컨트롤러 크기</label>
-                        <input type="range" id="input-ui-scale" class="w-full appearance-none bg-transparent">
-                        <input type="number" id="input-ui-scale-num" class="w-16 bg-black/50 border border-gray-600 rounded p-1 text-center text-sm text-white focus:border-green-500 focus:outline-none">
-                    </div>
-
-                    <div class="flex items-center justify-between hide-on-drag py-1">
-                        <label class="w-auto text-sm text-gray-400 shrink-0">컨트롤러 UI 숨기기</label>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" id="input-hide-controls" class="sr-only peer">
-                            <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-checked:bg-green-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
-                        </label>
                     </div>
 
                     <div class="flex items-center gap-3">
@@ -371,8 +379,46 @@
         let touchStartOffset = 0;
         let isDragging = false;
 
+        // 🔥 화면 항상 켜기 (Wake Lock) 상태 변수
+        let wakeLock = null;
+
         const SP_AUTH_API = "https://accounts.spotify.com/api/token";
         const SP_PLAYER_API = "https://api.spotify.com/v1/me/player";
+
+        // 🔥 Wake Lock 활성화 함수
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Wake Lock 활성화 됨');
+                } catch (err) {
+                    console.error('Wake Lock 에러:', err.name, err.message);
+                }
+            } else {
+                console.warn('이 브라우저는 Wake Lock API를 지원하지 않습니다.');
+            }
+        }
+
+        // 🔥 Wake Lock 해제 함수
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                wakeLock.release().then(() => {
+                    wakeLock = null;
+                    console.log('Wake Lock 해제 됨');
+                });
+            }
+        }
+
+        // 창이 다시 활성화(포커스)될 때, 설정이 켜져있다면 다시 Wake Lock 요청
+        // (OS에서 탭 전환 등으로 인해 자동으로 Lock을 푸는 경우가 있음)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                const isAwakeSaved = safeGetItem('sp_keep_awake') === 'true';
+                if (isAwakeSaved && wakeLock === null) {
+                    requestWakeLock();
+                }
+            }
+        });
 
         let transparencyTimeout;
         function setTransparentMode() {
@@ -994,7 +1040,7 @@
             showMediaControls();
 
             const fakeLRC = `[00:00.000] (미리보기 모드 시작)
-[00:03.000] 설정에서 재생 컨트롤러의 크기를 늘리거나 줄일 수 있습니다!
+[00:03.000] 설정에서 화면이 꺼지지 않게 항상 켜둘 수 있습니다!
 [00:06.000] 또한 컨트롤러가 화면을 가리는 게 싫다면,
 [00:09.000] '컨트롤러 UI 숨기기' 스위치로 아예 끌 수도 있습니다.
 [00:12.000] 이제 화면 구성을 눈으로 직접 보면서 쾌적하게 조절해보세요.
@@ -1181,12 +1227,30 @@
             setupUIControl('line-height', '--lyric-line-height', '', 1.0, 3.0, 0.05, 1.2);
             setupUIControl('margin', '--lyric-margin-bottom', 'rem', 0.5, 5.0, 0.1, 1.5);
             
-            // 🔥 UI 크기 조절 초기화
             setupUIControl('ui-scale', null, '', 0.5, 2.0, 0.1, 1.0, (val) => { 
                 document.documentElement.style.setProperty('--ui-scale', val); 
             });
 
-            // 🔥 재생 컨트롤러 숨기기 초기화
+            // 🔥 화면 항상 켜기 (Wake Lock) 초기화
+            const checkKeepAwake = document.getElementById('input-keep-awake');
+            if (checkKeepAwake) {
+                const isAwakeSaved = safeGetItem('sp_keep_awake') === 'true';
+                checkKeepAwake.checked = isAwakeSaved;
+                if (isAwakeSaved) {
+                    requestWakeLock();
+                }
+
+                checkKeepAwake.addEventListener('change', (e) => {
+                    const isAwake = e.target.checked;
+                    safeSetItem('sp_keep_awake', isAwake);
+                    if (isAwake) {
+                        requestWakeLock();
+                    } else {
+                        releaseWakeLock();
+                    }
+                });
+            }
+
             const checkHideControls = document.getElementById('input-hide-controls');
             if (checkHideControls) {
                 const isHiddenSaved = safeGetItem('sp_hide_controls') === 'true';
@@ -1226,7 +1290,7 @@
                         'plain-speed': 20,
                         'line-height': 1.2,
                         'margin': 1.5,
-                        'ui-scale': 1.0 // UI 크기 기본값 포함
+                        'ui-scale': 1.0 
                     };
                     for (const [key, val] of Object.entries(defaultValues)) {
                         const slider = document.getElementById(`input-${key}`);
@@ -1236,10 +1300,15 @@
                         }
                     }
 
-                    // 숨기기 토글 기본값 복원
                     if (checkHideControls) {
                         checkHideControls.checked = false;
                         checkHideControls.dispatchEvent(new Event('change'));
+                    }
+
+                    // Wake Lock 초기화
+                    if (checkKeepAwake) {
+                        checkKeepAwake.checked = false;
+                        checkKeepAwake.dispatchEvent(new Event('change'));
                     }
                 });
             }
